@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Interactive Room</title>
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: monospace;
+}
+
+#frame {
+    width: 400px;
+    height: 400px;
+}
+
+#scene {
+    position: relative;
+    width: 100px;
+    height: 100px;
+    transform: scale(4);
+    transform-origin: top left;
+    image-rendering: pixelated;
+    cursor: pointer;
+}
+
+#background {
+    position: absolute;
+    inset: 0;
+    image-rendering: pixelated;
+    z-index: 0;
+}
+
+.object {
+    position: absolute;
+    inset: 0;
+    image-rendering: pixelated;
+    pointer-events: none;
+    z-index: 1;
+}
+
+#darkness {
+    position: absolute;
+    inset: 0;
+    background: black;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
+}
+
+#textBox {
+    position: absolute;
+    bottom: -24px;
+    width: 100px;
+    font-size: 5px;
+    color: #ddd;
+    text-align: center;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+}
+</style>
+</head>
+
+<body>
+<div id="frame">
+    <div id="scene">
+        <img id="background" src="lightsonbackground.png">
+        <img id="light" class="object" src="lighton.png">
+        <img id="window" class="object" src="windowunbroken.png">
+        <img id="bed" class="object" src="bedunbroken.png">
+
+        <div id="darkness"></div>
+        <div id="textBox"></div>
+    </div>
+</div>
+
+<script>
+let lightClicks = 0;
+let windowBroken = false;
+let bedBroken = false;
+let darknessLevel = 0;
+let ready = true;
+let finalLoopStarted = false;
+let flickerInterval;
+let flickerTalkingInterval;
+let fadeTimeout;
+let introQueue = [];
+let introRunning = false;
+
+const scene = document.getElementById("scene");
+const bg = document.getElementById("background");
+const light = document.getElementById("light");
+const windowObj = document.getElementById("window");
+const bed = document.getElementById("bed");
+const darkness = document.getElementById("darkness");
+const textBox = document.getElementById("textBox");
+
+const hitData = new Map();
+
+// ---------------- CACHE IMAGES ----------------
+function cacheImage(img) {
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    hitData.set(img, ctx.getImageData(0, 0, c.width, c.height));
+}
+
+const images = [bg, light, windowObj, bed];
+images.forEach(img => {
+    if (img.complete && img.naturalWidth !== 0) cacheImage(img);
+    else img.onload = () => { cacheImage(img); };
+});
+
+// ---------------- HELPERS ----------------
+function say(text, duration = 4000) {
+    if (fadeTimeout) clearTimeout(fadeTimeout);
+    textBox.textContent = text;
+    textBox.style.opacity = 1;
+    fadeTimeout = setTimeout(() => { textBox.style.opacity = 0; }, duration);
+}
+
+function increaseDarkness() {
+    darknessLevel = Math.min(0.85, darknessLevel + 0.15);
+    darkness.style.opacity = darknessLevel;
+}
+
+function pixelHit(img, clientX, clientY) {
+    if (!ready) return false;
+    const rect = scene.getBoundingClientRect();
+    const scale = rect.width / 100;
+    const x = Math.floor((clientX - rect.left) / scale);
+    const y = Math.floor((clientY - rect.top) / scale);
+    if (x < 0 || y < 0 || x >= 100 || y >= 100) return false;
+    const data = hitData.get(img);
+    const px = Math.floor(x * (img.naturalWidth / 100));
+    const py = Math.floor(y * (img.naturalHeight / 100));
+    const i = (py * data.width + px) * 4;
+    return data.data[i + 3] > 10;
+}
+
+// ---------------- FINAL LOOP ----------------
+const finalLines = [
+    "What have you done...",
+    "It's getting colder...",
+    "I'm freezing...",
+    "I need sleep...",
+    "I'm scared..."
+];
+
+function startFinalLoop() {
+    if (finalLoopStarted) return;
+    finalLoopStarted = true;
+    let idx = 0;
+    setInterval(() => {
+        say(finalLines[idx], 4000);
+        idx = (idx + 1) % finalLines.length;
+    }, 4200);
+}
+
+// ---------------- INTRO QUEUE ----------------
+function enqueueIntro() {
+    if (!bedBroken) introQueue.push("I need to rest...");
+    if (!windowBroken) introQueue.push("I need some fresh air...");
+    if (lightClicks === 0) introQueue.push("This light is giving me a headache...");
+}
+
+function runIntroQueue() {
+    if (introRunning) return;
+    introRunning = true;
+
+    const processQueue = () => {
+        if (introQueue.length === 0) {
+            introRunning = false;
+            setTimeout(() => { enqueueIntro(); runIntroQueue(); }, 5000);
+            return;
+        }
+        const next = introQueue.shift();
+        say(next, 4000);
+        setTimeout(() => processQueue(), 5000);
+    };
+    processQueue();
+}
+
+// ---------------- CLICK HANDLER ----------------
+scene.addEventListener("click", (e) => {
+
+    if (pixelHit(light, e.clientX, e.clientY)) {
+        lightClicks++;
+        clearInterval(introQueue); // stop intro while flicker starts
+        if (lightClicks === 1) {
+            flickerInterval = setInterval(() => {
+                bg.src = (bg.src.includes("lightson")) ? "lightsoffbackground.png" : "lightsonbackground.png";
+            }, 200);
+            flickerTalkingInterval = setInterval(() => {
+                say("The light is flickering, make it stop!", 4000);
+            }, 4200);
+        } else {
+            clearInterval(flickerInterval);
+            clearInterval(flickerTalkingInterval);
+            light.src = "lightoff.png";
+            bg.src = "lightsoffbackground.png";
+            say("I'm scared of the dark!", 4000);
+        }
+        increaseDarkness();
+        checkAllInteracted();
+        return;
+    }
+
+    if (!windowBroken && pixelHit(windowObj, e.clientX, e.clientY)) {
+        windowBroken = true;
+        windowObj.src = "windowbroke.png";
+        say("Now I'm cold.", 4000);
+        setTimeout(() => { enqueueIntro(); runIntroQueue(); }, 4000);
+        increaseDarkness();
+        checkAllInteracted();
+        return;
+    }
+
+    if (!bedBroken && pixelHit(bed, e.clientX, e.clientY)) {
+        bedBroken = true;
+        bed.src = "bedbroke.png";
+        say("Now I can't rest.", 4000);
+        setTimeout(() => { enqueueIntro(); runIntroQueue(); }, 4000);
+        increaseDarkness();
+        checkAllInteracted();
+        return;
+    }
+});
+
+// ---------------- CHECK ALL DONE ----------------
+function checkAllInteracted() {
+    if (windowBroken && bedBroken && lightClicks >= 2) {
+        startFinalLoop();
+    }
+}
+
+// ---------------- INITIAL ----------------
+window.addEventListener("load", () => {
+    enqueueIntro();
+    runIntroQueue();
+});
+</script>
+</body>
+</html>
